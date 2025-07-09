@@ -16,6 +16,10 @@ on:
         description: "This is a TestFlight build"
         default: false
         type: boolean
+      add_extensions:
+        description: "Include extensions (OpenInDiscord & ShareToDiscord)"
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -34,13 +38,64 @@ jobs:
           echo "export PATH=$PATH:$THEOS/bin" >> ~/.bashrc
           source ~/.bashrc
 
+      - name: Build Extensions (if enabled)
+        if: ${{ inputs.add_extensions == true }}
+        run: |
+          echo "Building extensions..."
+          # Build OpenInDiscord Extension
+          if [ -d "extensions/OpenInDiscord" ]; then
+            echo "Building OpenInDiscord..."
+            cd extensions/OpenInDiscord
+            xcodebuild build -target "OpenInDiscord" -configuration Release -sdk iphoneos -derivedDataPath build -allowProvisioningUpdates -allowEntitlements -allowSigningWithoutTeamIdentifier || exit 1
+            cd ../..
+            echo "OpenInDiscord built."
+          else
+            echo "OpenInDiscord directory not found, skipping build."
+          fi
+
+          # Build ShareToDiscord Extension
+          if [ -d "extensions/ShareToDiscord" ]; then
+            echo "Building ShareToDiscord..."
+            # Update the Info.plist to change URLScheme from 'discord' to 'unbound'
+            INFO_PLIST_PATH="extensions/ShareToDiscord/Share/Info.plist"
+            if [ -f "$INFO_PLIST_PATH" ]; then
+              /usr/bin/plutil -replace CFBundleURLSchemes -json '["unbound"]' "$INFO_PLIST_PATH"
+              echo "Updated ShareToDiscord Info.plist URLScheme to 'unbound'."
+            else
+              echo "ShareToDiscord Info.plist not found at $INFO_PLIST_PATH, skipping URLScheme update."
+            fi
+            cd extensions/ShareToDiscord
+            xcodebuild build -target "Share" -configuration Release -sdk iphoneos -derivedDataPath build -allowProvisioningUpdates -allowEntitlements -allowSigningWithoutTeamIdentifier || exit 1
+            cd ../..
+            echo "ShareToDiscord built."
+          else
+            echo "ShareToDiscord directory not found, skipping build."
+          fi
+
       - name: Build Tweak
         run: |
           export THEOS=/opt/theos
+          # Prepare extensions for injection if enabled
+          EXTENSIONS_TO_INJECT=""
+          if [ "${{ inputs.add_extensions }}" == "true" ]; then
+            if [ -d "extensions/OpenInDiscord/build/Build/Products/Release-iphoneos/OpenInDiscord.appex" ]; then
+              EXTENSIONS_TO_INJECT="${EXTENSIONS_TO_INJECT} extensions/OpenInDiscord/build/Build/Products/Release-iphoneos/OpenInDiscord.appex"
+            fi
+            if [ -d "extensions/ShareToDiscord/build/Build/Products/Release-iphoneos/Share.appex" ]; then
+              EXTENSIONS_TO_INJECT="${EXTENSIONS_TO_INJECT} extensions/ShareToDiscord/build/Build/Products/Release-iphoneos/Share.appex"
+            fi
+          fi
+          
+          # Modify Makefile to include extensions in the build process if they exist
+          if [ -n "$EXTENSIONS_TO_INJECT" ]; then
+            echo "Adding extensions to Makefile for injection..."
+            sed -i '/^redemption_FILES =/ s/$/ \\\n\t$(EXTENSIONS_TO_INJECT)/' Makefile
+          fi
+
           make package
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Redemption-Loader-deb
           path: packages/*.deb
@@ -57,3 +112,5 @@ jobs:
             Built from commit ${{ github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
