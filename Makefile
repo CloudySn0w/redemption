@@ -1,35 +1,83 @@
-THEOS_PACKAGE_SCHEME=rootless
-FINALPACKAGE=1
-INSTALL_TARGET_PROCESSES = Discord
-
-ARCHS := arm64 arm64e
-TARGET := iphone:clang:latest:15.0
+ARCHS = arm64 arm64e
+TARGET := iphone:clang:latest:14.0
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = Unbound
-$(TWEAK_NAME)_FILES = $(shell find sources -name "*.x*" -o -name "*.m*")
-$(TWEAK_NAME)_CFLAGS =  -fobjc-arc -DPACKAGE_VERSION='@"$(THEOS_PACKAGE_BASE_VERSION)"' -I$(THEOS_PROJECT_DIR)/headers
-$(TWEAK_NAME)_FRAMEWORKS = UIKit Foundation UniformTypeIdentifiers
+TWEAK_NAME = redemption
 
-BUNDLE_NAME = UnboundResources
-$(BUNDLE_NAME)_INSTALL_PATH = "/Library/Application\ Support/"
-$(BUNDLE_NAME)_RESOURCE_DIRS = "resources"
+redemption_FILES = sources/Tweak.xm \
+                            sources/FileSystem.m \
+                            sources/Logger.m \
+                            sources/NativeBridge.x \
+                            sources/Plugins.m \
+                            sources/Settings.m \
+                            sources/Themes.x \
+                            sources/Recovery.x \
+                            sources/Fonts.x \
+                            sources/Misc.x \
+                            RevengeCompatibilityLayer.x
+
+redemption_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+redemption_CCFLAGS = -std=c++17
+redemption_LDFLAGS = -lc++
+
+# Framework dependencies
+redemption_FRAMEWORKS = UIKit Foundation CoreFoundation JavaScriptCore WebKit
+
+# Private framework dependencies (if needed)
+redemption_PRIVATE_FRAMEWORKS = 
+
+# Additional libraries
+redemption_LIBRARIES = 
+
+# Bundle filter for Discord
+redemption_FILTER = com.hammerandchisel.discord
+
+# Install location
+redemption_INSTALL_PATH = /Library/MobileSubstrate/DynamicLibraries
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-include $(THEOS_MAKE_PATH)/bundle.mk
 
-before-all::
-	@if [ ! -d "resources" ] || [ -z "$$(ls -A resources 2>/dev/null)" ]; then \
-		echo "Resources folder empty or missing, initializing submodule..."; \
-		git submodule update --init --recursive || exit 1; \
-	fi
+# Custom build flags for Revenge compatibility
+ADDITIONAL_CFLAGS = -DREVENGE_COMPATIBILITY_ENABLED=1 \
+                   -DHERMES_BYTECODE_SUPPORT=1 \
+                   -DMETRO_PATCHING_ENABLED=1
 
-	$(ECHO_NOTHING)VERSION_NUM=$$(echo "$(THEOS_PACKAGE_BASE_VERSION)" | cut -d'.' -f1,2) && \
-		sed "s/VERSION_PLACEHOLDER/$$VERSION_NUM/" sources/preload.js > resources/preload.js$(ECHO_END)
+# Add custom flags to compilation
+redemption_CFLAGS += $(ADDITIONAL_CFLAGS)
 
-after-stage::
-	$(ECHO_NOTHING)find $(THEOS_STAGING_DIR) -name ".DS_Store" -delete$(ECHO_END)
+# Post-build actions
+after-install::
+	install.exec "killall -9 Discord || true"
+	install.exec "uicache -p /Applications/Discord.app || true"
 
-after-package::
-	$(ECHO_NOTHING)rm resources/preload.js$(ECHO_END)
+# Clean target
+clean::
+	rm -rf $(THEOS_OBJ_DIR)
+	rm -rf packages/*
+
+# Package information
+PACKAGE_VERSION = $(THEOS_PACKAGE_BASE_VERSION)
+
+# Development build target
+dev: clean all package install
+
+# Release build target  
+release: clean
+	$(MAKE) FINALPACKAGE=1 package
+
+# Debug build with additional logging
+debug: clean
+	$(MAKE) DEBUG=1 ADDITIONAL_CFLAGS="$(ADDITIONAL_CFLAGS) -DDEBUG_LOGGING=1" all package install
+
+# Test target for validation
+test: install
+	@echo "Testing Unbound with Revenge compatibility..."
+	@echo "Please launch Discord and check the logs for successful initialization"
+
+# Documentation generation (if needed)
+docs:
+	@echo "Generating documentation for Revenge compatibility layer..."
+	@echo "See Context.md for detailed information about the integration"
+
+.PHONY: dev release debug test docs
